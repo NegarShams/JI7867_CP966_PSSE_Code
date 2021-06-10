@@ -18,6 +18,7 @@ from matplotlib.ticker import FormatStrFormatter
 import numpy as np
 import pandas as pd
 import os
+import optimisation.file_handling as file_handling
 
 # Constants / Filenames
 project_directory = (
@@ -25,21 +26,28 @@ project_directory = (
 	r'\5 Working Docs\Phase B')
 
 # List and selection of raw data files
-selector = [5]
+selector = [6, 7]
 source_files = [
 	os.path.join(project_directory, 'Results_SVHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_WPHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVHW(CP966).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(CP966).xlsx'),
-	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx')
+	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx'),
+	os.path.join(project_directory, 'Results_SVHW(CP966)_RC.xlsx'),
+	os.path.join(project_directory, 'Results_WPHW(CP966)_RC.xlsx')
 ]
 
 pth_busbar_list = os.path.join(project_directory, 'Model_Review.xlsx')
 sht = 'V Steady'
 
 
-def produce_plots(source_file):
+def produce_plots_voltage(source_file):
+	"""
+		Produces plots based on type of output
+	:param source_file:
+	:return:
+	"""
 	# Figure Name
 	file_name, _ = os.path.splitext(source_file)
 	fig_name = file_name + '_Voltage.png'
@@ -48,14 +56,7 @@ def produce_plots(source_file):
 	cols_to_drop = ['NUMBER.1', 'EXNAME', 'BASE', 'PU', 'LOWER_LIMIT', 'UPPER_LIMIT']
 	index_to_drop = ['Compliant']
 
-	# Get list of busbars to be plotted
-	df_busbars = pd.read_excel(pth_busbar_list, sheet_name='Busbars', index_col=0, header=0)
-	# Reduce dataframe to only be those which are labelled as keep
-	df_busbars = df_busbars.loc[df_busbars['Include']==1]
-	# Sort into order for plotting
-	df_busbars.sort_values(by=['Nominal', 'Plot Name'], ascending=[False, True], inplace=True)
-	# Extract index for busbars that should be plotted
-	busbars_to_keep = df_busbars.index
+	df_busbars, busbars_to_keep = file_handling.busbars_to_consider(pth_busbar_list=pth_busbar_list)
 
 	# Get results from contingency tool
 	df = pd.read_excel(source_file, sheet_name=sht, index_col=0)
@@ -64,9 +65,13 @@ def produce_plots(source_file):
 	# Where based on a 380kV nominal adjust to be based on 400kV nominal
 	df.loc[df['BASE'] == 380.0] = df[df.select_dtypes(include=['number']).columns] * (380.0/400.0)
 
+	for bus, contingency in df_busbars['Contingency'].iteritems():
+		if not pd.isna(contingency):
+			df.loc[bus, contingency] = np.nan
+
 	# Extract voltage upper and lower threshold
-	l_threshold = df['LOWER_LIMIT']
-	u_threshold = df['UPPER_LIMIT']
+	# l_threshold = df['LOWER_LIMIT']
+	# u_threshold = df['UPPER_LIMIT']
 	thresholds = df.loc[:, ['LOWER_LIMIT', 'UPPER_LIMIT']]
 
 	# Tidy / drop unnecessary entries from DataFrame
@@ -80,11 +85,12 @@ def produce_plots(source_file):
 	ax2 = fig2.gca()
 
 	# X axis values
-	X2 = df.loc[busbars_to_keep, :].index
+	x2 = df.loc[busbars_to_keep, :].index
 
 	# Calculate box positions for boundary limits
 	stats = collections.OrderedDict()
-	for x in X2:
+	for x in x2:
+		# noinspection PyUnresolvedReferences
 		stats[x] = cbook.boxplot_stats(thresholds.loc[x, :].values, labels=[x])[0]
 		stats[x]['q1'] = thresholds.loc[x, 'LOWER_LIMIT']
 		stats[x]['q3'] = thresholds.loc[x, 'UPPER_LIMIT']
@@ -93,8 +99,8 @@ def produce_plots(source_file):
 
 	# Produce violin plot of busbar voltages
 	# Y axis values containing all busbar voltages for each contingency of selected busbars
-	Y2 = df.loc[X2, :].T.values
-	vp = ax2.violinplot(Y2, showmedians=False, showextrema=True, widths=0.7)
+	y2 = df.loc[x2, :].T.values
+	vp = ax2.violinplot(y2, showmedians=False, showextrema=True, widths=0.7)
 	# Adjust violin plot colours
 	for pc in vp['bodies']:
 		pc.set_facecolor('green')
@@ -102,9 +108,9 @@ def produce_plots(source_file):
 	vp['cmaxes'].set_linewidth(1)
 	vp['cmins'].set_linewidth(1)
 
-	box = ax2.bxp(
-		stats.values(), showcaps=False, medianprops={'linewidth':0}, boxprops={'linewidth':1},
-		whiskerprops={'linewidth':0}, widths=0.8
+	_ = ax2.bxp(
+		stats.values(), showcaps=False, medianprops={'linewidth': 0}, boxprops={'linewidth': 1},
+		whiskerprops={'linewidth': 0}, widths=0.8
 	)
 
 	# Get labels to give for each busbar
@@ -112,7 +118,7 @@ def produce_plots(source_file):
 	x_categories = [str(x) for x in x_categories]
 
 	# Adjust graph properties for better presentation
-	ax2.set_xticks(np.arange(1, len(X2) + 1))
+	ax2.set_xticks(np.arange(1, len(x2) + 1))
 	ax2.set_xticklabels(x_categories)
 	plt.xticks(rotation='vertical', fontsize=14)
 	plt.yticks(np.linspace(0.89, 1.11, 23), fontsize=14)
@@ -131,8 +137,6 @@ if __name__ == '__main__':
 		res_file = source_files[i]
 
 		if os.path.isfile(res_file):
-			produce_plots(source_file=res_file)
+			produce_plots_voltage(source_file=res_file)
 		else:
 			print('File <{}> does not exist'.format(res_file))
-
-

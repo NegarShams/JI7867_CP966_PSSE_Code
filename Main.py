@@ -19,12 +19,7 @@ import pandas as pd
 import optimisation
 import optimisation.constants as constants
 
-# Set selector to -1 and will iterate through all results, otherwise select value which corresponds with input dataset
-# in list of sav cases and files below
-selector = -1
-
 # Constants for running studies
-# TODO: Produce GUI to allow selecting of these
 project_directory = (
 	r'C:\Users\david\Power Systems Consultants Inc\Jobs - JI7867 - Cable Integration Studies for Capital Project 966'
 	r'\5 Working Docs\Phase B')
@@ -36,8 +31,23 @@ pth_EirGrid_SAV = [
 	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(BC).sav'),
 	os.path.join(project_directory, 'PSSE Models', 'snv_high wind_30snv_mec_33_v1(CP966).sav'),
 	os.path.join(project_directory, 'PSSE Models', 'snv_low wind_30snv_mec_33_v1(CP966).sav'),
-	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966).sav')
+	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966).sav'),
+	os.path.join(project_directory, 'PSSE Models', 'snv_high wind_30snv_mec_33_v1(CP966)_RC.sav'),
+	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966)_RC.sav')
 ]
+
+# Which studies to consider adjusting reactive power for voltage limits
+adjust_reactive_comp = [
+	False,
+	False,
+	False,
+	True,
+	True,
+	True,
+	False,
+	False
+]
+
 # Path where all of the contingencies are stores
 pth_Contingencies = os.path.join(project_directory, 'Contingencies.xlsx')
 
@@ -48,29 +58,43 @@ pth_results = [
 	os.path.join(project_directory, 'Results_WPHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVHW(CP966).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(CP966).xlsx'),
-	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx')
+	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx'),
+	os.path.join(project_directory, 'Results_SVHW(CP966)_RC.xlsx'),
+	os.path.join(project_directory, 'Results_WPHW(CP966)_RC.xlsx')
 ]
 
-selector = [5]
+selector = [6, 7]
+
+# Contains details of the busbars to include and these are then used to focus the area of the analysis for voltage
+# compliance checking
+pth_busbar_list = os.path.join(project_directory, 'Model_Review.xlsx')
 
 
-
-
-def main(cont_workbook, psse_sav_case, target_workbook):
+def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_busbars=str()):
 	"""
 		Main function
 	:param str cont_workbook: Path to workbook which contains contingency details
 	:param str psse_sav_case:  Path to psse SAV case
 	:param str target_workbook: Path where results should be saved
+	:param bool adjust_reactive:  Whether the reactive compensation should be adjusted to maintain voltages or not
+	:param str pth_busbars:  Path to file where a list of busbars are located
 	:return str target_workbook:  Path to excel file created as part of study
 	"""
 
 	# Load PSSE case and get details
 	logger = logging.getLogger(constants.Logging.logger_name)
+
+	# Get list of busbars to include (if path provided as an input)
+	if pth_busbars:
+		df_busbars, busbars_to_consider = optimisation.file_handling.busbars_to_consider(pth_busbar_list=pth_busbars)
+	else:
+		busbars_to_consider = tuple()
+
 	logger.info('Loading PSSE case {} and checking convergent'.format(psse_sav_case))
 	psse_case = optimisation.psse.PsseControl()
 	psse_case.load_data_case(pth_sav=psse_sav_case)
-	psse_case.define_bus_subsystem()
+
+	psse_case.define_bus_subsystem(busbars=tuple(busbars_to_consider))
 
 	# Check have an initially convergent load flow
 	load_flow_success, islanded_busbars = psse_case.run_load_flow()
@@ -91,15 +115,16 @@ def main(cont_workbook, psse_sav_case, target_workbook):
 	else:
 		logger.info('Initial load flow study convergent')
 
+	# Make sure reactive compensation level suitable for base case
 	# Continue since base load flow case is convergent
 	bus_data = optimisation.psse.BusData(sid=psse_case.sid)
+	machine_data = optimisation.psse.MachineData(sid=psse_case.sid)
 	circuit_data = optimisation.psse.BranchData(flag=2, sid=psse_case.sid)
 	tx2_data = optimisation.psse.BranchData(flag=6, tx=True, sid=psse_case.sid)
 	tx3_data = optimisation.psse.Tx3Data(sid=psse_case.sid)
 	tx3_wind_data = optimisation.psse.Tx3WndData(sid=psse_case.sid)
 	fixed_shunt_data = optimisation.psse.ShuntData(fixed=True, sid=psse_case.sid)
 	switched_shunt_data = optimisation.psse.ShuntData(fixed=False, sid=psse_case.sid)
-	machine_data = optimisation.psse.MachineData()
 
 	# Import workbook of contingency details
 	logger.info('Importing details of all contingencies from workbook {}'.format(cont_workbook))
@@ -108,11 +133,20 @@ def main(cont_workbook, psse_sav_case, target_workbook):
 
 	for cont_name in contingency_data.contingency_names:
 		logger.debug('Processing contingency: {}'.format(cont_name))
+
+		# Check if contingency has any busbars which should be excluded when adjusting the reactive power
+		if pth_busbars:
+			# noinspection PyUnboundLocalVariable
+			busbars_to_ignore = tuple(df_busbars[df_busbars['Contingency'] == cont_name].index)
+		else:
+			busbars_to_ignore = tuple()
+
+		# Setup contingency
 		circuits, tx2, tx3, busbars, fixed_shunts, switched_shunts = contingency_data.group_contingencies_by_name(
 			cont_name=cont_name)
 		contingency = optimisation.psse.Contingency(
 			circuits=circuits, tx2=tx2, tx3=tx3, busbars=busbars, fixed_shunts=fixed_shunts,
-			switched_shunts=switched_shunts, name=cont_name)
+			switched_shunts=switched_shunts, name=cont_name, busbars_to_ignore=busbars_to_ignore)
 		contingency_circuits_details[cont_name] = contingency
 	logger.info('All contingencies from workbook {} imported'.format(cont_workbook))
 
@@ -126,11 +160,13 @@ def main(cont_workbook, psse_sav_case, target_workbook):
 	contingency_convergence.loc[constants.Contingency.bc, constants.Excel.message] = constants.Contingency.convergent
 	contingency_convergence.loc[constants.Contingency.bc, constants.Excel.convergence] = True
 	for name, contingency in contingency_circuits_details.iteritems():
+
 		logger.info('Testing contingency {}'.format(name))
 		if contingency.voltage_control_contingency:
 			shunt_switching.append(name)
 		else:
 			circuit_switching.append(name)
+
 		contingency.setup_contingency(
 			circuit_data=circuit_data,
 			tx2_data=tx2_data,
@@ -142,7 +178,7 @@ def main(cont_workbook, psse_sav_case, target_workbook):
 		)
 		contingency.test_contingency(
 			psse=psse_case, bus_data=bus_data, circuit_data=circuit_data, tx2_data=tx2_data,
-			tx3_wind_data=tx3_wind_data, machine_data=machine_data
+			tx3_wind_data=tx3_wind_data, machine_data=machine_data, adjust_reactive=adjust_reactive
 		)
 
 		# Rather than restoring it is quicker to just reload the SAV case
@@ -169,7 +205,7 @@ def main(cont_workbook, psse_sav_case, target_workbook):
 	compliance.append(df_compliance_step_change)
 
 	# Combine all contingency names into a single list
-	all_cont_names = [constants.Contingency.bc] + circuit_switching + shunt_switching
+	all_cont_names = circuit_switching + shunt_switching
 	for data_set in (bus_data, circuit_data, tx2_data, tx3_wind_data):
 		compliance.append(data_set.check_compliance(cont_names=all_cont_names))
 
@@ -216,7 +252,11 @@ if __name__ == '__main__':
 		pth_res = pth_results[i]
 		local_logger.info('Processing SAV case {}'.format(pth_sav))
 		try:
-			pth_excel = main(cont_workbook=pth_Contingencies, psse_sav_case=pth_sav, target_workbook=pth_res)
+			pth_excel = main(
+				cont_workbook=pth_Contingencies, psse_sav_case=pth_sav, target_workbook=pth_res,
+				pth_busbars=pth_busbar_list,
+				adjust_reactive=adjust_reactive_comp[i]
+			)
 			local_logger.info(
 				'SAV case {} completed in {:.2f}, results saved in {}'.format(pth_sav, time.time()-t1, pth_res)
 			)

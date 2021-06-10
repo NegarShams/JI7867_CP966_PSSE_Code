@@ -153,12 +153,14 @@ class BranchData:
 
 		# Function input constants
 		entry = 2  # Double entry
+		ties = 3 # Include interior and exterior branches
 
 		# Retrieve data from PSSE
 		ierr_int, iarray = func_int(
 			sid=self.sid,
 			flag=self.flag,
 			entry=entry,
+			ties=ties,
 			string=(self.c.from_bus,
 					self.c.to_bus,
 					self.c.status))
@@ -166,11 +168,13 @@ class BranchData:
 			sid=self.sid,
 			flag=self.flag,
 			entry=entry,
+			ties=ties,
 			string=(self.c.id,))
 		ierr_real, rarray = func_real(
 			sid=self.sid,
 			flag=self.flag,
 			entry=entry,
+			ties=ties,
 			string=(self.c.ratea, self.c.rateb, self.c.ratec, self.c.loading))
 		if ierr_int > 0 or ierr_char > 0 or ierr_real > 0:
 			self.logger.error(('Unable to retrieve the branch data from the SAV case and the following error codes '
@@ -211,8 +215,7 @@ class BranchData:
 			self.df_status[cont_name] = complete_df[self.c.status]
 			self.df_loading[cont_name] = complete_df[self.c.loading]
 
-	def change_state(self, asset=pd.Series(),
-					 restore=False, restore_all=False):
+	def change_state(self, asset=pd.Series(), restore=False, restore_all=False):
 		"""
 			Switches the status of the branch for a specific contingency and updates the branch status
 		:param pd.Series asset: (optional=pd.Series()) Branch whose status is to be changed
@@ -283,7 +286,7 @@ class BranchData:
 			success = False
 			self.logger.error(('Error code {} raised when calling function {} for branch {}-{}-{} to '
 							   'change status to {}')
-							  .format(ierr, self.func_switch.__name__, bus1, bus2, ckt, status))
+							  .format(ierr, self.func_switch.__name__, int(bus1), int(bus2), str(ckt), status))
 		else:
 			success = True
 		return success
@@ -695,7 +698,7 @@ class Tx3Data:
 
 		# Function input constants
 		entry = 1
-		ties=3
+		ties = 3
 
 		# Retrieve data from PSSE
 		ierr_int, iarray = func_int(
@@ -1128,22 +1131,25 @@ class BusData:
 
 		return df_compliance
 
-	def check_within_limits(self, cont_name):
+	def check_within_limits(self, cont_name, busbars_to_ignore=tuple()):
 		"""
 			Function updates voltages and then returns True / False on whether within acceptable limits for steady state
 		:param str cont_name:  Name of contingency to be checked
+		:param tuple busbars_to_ignore:  Tuple of all the busbars which should be ignored for the analysis
 		:return bool within_limits:  True / False on whether all within limits
 		"""
 		# Update all busbar details for this contingency
 		self.update_voltages(cont_name=cont_name, voltage_step=False)
 
+		# Get subset of Dataframe which excludes the busbars in the ignore list and just the values for this contingency
+		df_subset = self.df_voltage_steady.loc[
+			~self.df_voltage_steady[self.c.bus].isin(busbars_to_ignore),
+			(cont_name, self.c.upper_limit)
+		]
 		# Confirm voltages are within limits
-		within_limits = (self.df_voltage_steady[cont_name] <= self.df_voltage_steady[self.c.upper_limit]).all()
+		within_limits = (df_subset[cont_name] <= df_subset[self.c.upper_limit]).all()
 
 		return within_limits
-
-
-
 
 
 class MachineData:
@@ -1249,12 +1255,11 @@ class MachineData:
 		return success
 
 
-
 class Contingency:
 	"""
 		Will contain the details of the specific contingency event
 	"""
-	def __init__(self, circuits, tx2, tx3, busbars, fixed_shunts, switched_shunts, name):
+	def __init__(self, circuits, tx2, tx3, busbars, fixed_shunts, switched_shunts, name, busbars_to_ignore):
 		"""
 			Initialise generator class instance
 		:param pd.DataFrame circuits: Branches associated with this contingency
@@ -1263,6 +1268,7 @@ class Contingency:
 		:param pd.DataFrame busbars: Islanded busbars associated with this contingency
 		:param pd.DataFrame fixed_shunts: Shunts associated with this contingency
 		:param pd.DataFrame switched_shunts: Shunts associated with this contingency
+		:param tuple busbars_to_ignore:  Tuple of busbars which should be ignored from the analysis
 		:param str name: Name of contingency
 		"""
 
@@ -1280,6 +1286,8 @@ class Contingency:
 		# Set to True if contingency is convergent.  First entry reflect
 		self.convergent_v_step = False
 		self.convergent_v_steady = False
+
+		self.busbars_to_ignore = busbars_to_ignore
 
 		# Function checks that the dataframe inputs are of the expected format
 		self.check_input_data()
@@ -1331,8 +1339,10 @@ class Contingency:
 				# #df_status[constants.Branches.id].apply(str)
 				df[constants.Branches.id] = df[constants.Branches.id].astype('str')
 
-	def setup_contingency(self, circuit_data, tx2_data, tx3_data, tx3_wind_data, bus_data,
-						  fixed_shunt_data, switched_shunt_data, restore=False):
+	def setup_contingency(
+			self, circuit_data, tx2_data, tx3_data, tx3_wind_data, bus_data, fixed_shunt_data,
+			switched_shunt_data, restore=False
+	):
 		"""
 			Switch elements associated with this contingency
 		:param BranchData circuit_data:  Class containing all the circuit data for the PSSE model
@@ -1346,6 +1356,14 @@ class Contingency:
 			initial value
 		:return None:
 		"""
+
+		# Skip contingency setup if BASE_CASE
+		if self.name == constants.Contingency.bc:
+			self.setup_correctly = True
+			self.logger.debug(
+				'Contingency {} is the base case and therefore no switching actions have taken place'.format(self.name)
+			)
+			return None
 
 		# Iterate through each circuit and change status
 		success = []
@@ -1375,17 +1393,23 @@ class Contingency:
 		if restore:
 			self.setup_correctly = False
 		else:
-			for data in (circuit_data, tx2_data, tx3_data, tx3_wind_data, bus_data,
-						 switched_shunt_data, fixed_shunt_data):
+			for data in (
+					circuit_data, tx2_data, tx3_data, tx3_wind_data, bus_data, switched_shunt_data, fixed_shunt_data
+			):
 				data.update(cont_name=self.name)
 			self.setup_correctly = all(success)
 
 		if not self.setup_correctly:
 			self.logger.warning(
-				('An error occured when setting up contingency {} and so it has been skipped from further'
-				 'studies').format(self.name))
+				'An error occured when setting up contingency {} and so it has been skipped from further studies'.format(
+					self.name)
+			)
 
-	def test_contingency(self, psse, bus_data, circuit_data, tx2_data, tx3_wind_data, machine_data):
+		return None
+
+	def test_contingency(
+			self, psse, bus_data, circuit_data, tx2_data, tx3_wind_data, machine_data, adjust_reactive
+	):
 		"""
 			Runs load flow, checks convergent and updates busbar data with new loads
 		:param PsseControl psse:  Handle to the psse control class for running functions which will impact it
@@ -1394,7 +1418,8 @@ class Contingency:
 		:param BranchData tx2_data:
 		:param Tx3WndData tx3_wind_data:
 		:param MachineData machine_data:
-		:return bool success:  Returns True / False on whether the contigency ran successfully
+		:param bool adjust_reactive:  Determines whether reactive power should be adjusted or not
+		:return bool success:  Returns True / False on whether the contingency ran successfully
 		"""
 		# Check contingency has been setup correctly
 		if not self.setup_correctly:
@@ -1421,9 +1446,11 @@ class Contingency:
 				raise SyntaxError('Have managed to still have islanded busbars on second run so issue with script')
 
 		if not convergent_load_flow:
-			self.logger.info('Load flow for contingency {} is not convergent with fixed taps.  No busbar voltage or '
-							 'circuit loading values will be returned'
-							  .format(self.name))
+			self.logger.info(
+				(
+					'Load flow for contingency {} is not convergent with fixed taps.  No busbar voltage or '
+					'circuit loading values will be returned'
+				).format(self.name))
 			self.convergent_v_step = False
 
 			# Update busbar data with non-convergence flag to leave as blank
@@ -1447,7 +1474,8 @@ class Contingency:
 		else:
 			# Confirm if voltages all within limits otherwise reduce target set-point until voltages within limits at
 			# remote busbars.
-			self.check_voltage_adjust_machines(psse=psse, bus_data=bus_data, machine_data=machine_data)
+			if adjust_reactive:
+				self.check_voltage_adjust_machines(psse=psse, bus_data=bus_data, machine_data=machine_data)
 
 			self.convergent_v_steady = True
 			bus_data.update_voltages(cont_name=self.name, voltage_step=False)
@@ -1472,7 +1500,7 @@ class Contingency:
 		iter_count = 0
 
 		# Check if all steady state voltages within limits
-		within_limits = bus_data.check_within_limits(cont_name=self.name)
+		within_limits = bus_data.check_within_limits(cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore)
 
 		# Loop round gradually increasing shunt reactive power values until either within limits or max_iterations
 		# exceeded
@@ -1486,7 +1514,7 @@ class Contingency:
 			# Run load flow and check if within_limits
 			# Run a load flow and check for convergence along with any islanded busbars
 			convergent_load_flow, islanded_buses = psse.run_load_flow(lock_taps=False)
-			within_limits = bus_data.check_within_limits(cont_name=self.name)
+			within_limits = bus_data.check_within_limits(cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore)
 
 			# Increment iter_count
 			iter_count += 1
@@ -1677,9 +1705,10 @@ class PsseControl:
 
 		return df_disconnected_busbars
 
-	def define_bus_subsystem(self):
+	def define_bus_subsystem(self, busbars=tuple()):
 		"""
 			Function to define the bus subsystem
+		:param tuple busbars:  List of busbars to be included in bus subsystem
 		:return None:
 		"""
 		# psspy function
@@ -1708,15 +1737,21 @@ class PsseControl:
 		# #	ierr = func(sid=sid,
 		# #				areas=[area],
 		# #				zones=[zone])
-		ierr = func(sid=sid,
-					usekv=1,
-					basekv1=min_voltage,
-					basekv2=max_voltage)
+		# If busbars have been provided as an input then define the bus subsystem
+		if busbars:
+			ierr = func(
+				sid=sid, usekv=1, basekv1=min_voltage, basekv2=max_voltage,
+				numbus=len(busbars), buses=busbars
+			)
+		else:
+			ierr = func(sid=sid, usekv=1, basekv1=min_voltage, basekv2=max_voltage)
 
 		if ierr == 1:
-			self.logger.critical(('Error defining bus subsystem since sid number {} is deemed invalid by PSSE. '
-								  'PSSE returned the error code {} for the function {}')
-								 .format(sid, ierr, func.__name__))
+			self.logger.critical(
+				(
+					'Error defining bus subsystem since sid number {} is deemed invalid by PSSE. '
+					'PSSE returned the error code {} for the function {}'
+				).format(sid, ierr, func.__name__))
 			raise SyntaxError('Error in PSSE sid value')
 		else:
 			self.sid = sid

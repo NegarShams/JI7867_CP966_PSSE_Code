@@ -18,21 +18,23 @@ import optimisation.constants as constants
 
 
 def colnum_string(n):
-    string = ""
-    while n > 0:
-        n, remainder = divmod(n - 1, 26)
-        string = chr(65 + remainder) + string
-    return string
+	string = ""
+	while n > 0:
+		n, remainder = divmod(n - 1, 26)
+		string = chr(65 + remainder) + string
+	return string
 
 
 def colstring_number(col):
-    num = 0
-    for c in col:
-        if c in string.ascii_letters:
-            num = num * 26 + (ord(c.upper()) - ord('A')) + 1
-    return num
+	num = 0
+	for c in col:
+		if c in string.ascii_letters:
+			num = num * 26 + (ord(c.upper()) - ord('A')) + 1
+	return num
+
 
 class ImportContingencies:
+
 	def __init__(self, pth):
 		"""
 			Initialises the class and imports the complete set of contingencies
@@ -62,19 +64,21 @@ class ImportContingencies:
 		"""
 		# xl = pd.ExcelFile(self.pth)
 		# Get circuit contingencies
-		self.circuits = pd.read_excel(self.pth, sheet_name=self.c.circuit, header=0,
-									  names=self.c.columns[self.c.circuit])
-		self.circuits[self.c.id] = self.circuits[self.c.id].astype(str)
+		self.circuits = pd.read_excel(
+			self.pth, sheet_name=self.c.circuit, header=0,
+			names=self.c.columns[self.c.circuit]
+		)
+		self.circuits[self.c.id] = self.circuits[self.c.id].apply(lambda x: '{0:.0f}'.format(x) if isinstance(x, float) else x)
 
 		# Get 2 winding transformer contingencies
 		self.tx2 = pd.read_excel(self.pth, sheet_name=self.c.tx2, header=0,
 								 names=self.c.columns[self.c.tx2])
-		self.tx2[self.c.id] = self.tx2[self.c.id].astype(str)
+		self.tx2[self.c.id] = self.tx2[self.c.id].apply(lambda x: '{0:.0f}'.format(x) if isinstance(x, float) else x)
 
 		# Get 3 winding transformer contingencies
 		self.tx3 = pd.read_excel(self.pth, sheet_name=self.c.tx3, header=0,
 								 names=self.c.columns[self.c.tx3])
-		self.tx3[self.c.id] = self.tx3[self.c.id].astype(str)
+		self.tx3[self.c.id] = self.tx3[self.c.id].apply(lambda x: '{0:.0f}'.format(x) if isinstance(x, float) else x)
 
 		# Get busbar contingencies
 		self.busbars = pd.read_excel(self.pth, sheet_name=self.c.busbars, header=0,
@@ -83,11 +87,11 @@ class ImportContingencies:
 		# Get shunt contingencies
 		self.fixed_shunts = pd.read_excel(self.pth, sheet_name=self.c.fixed_shunts, header=0,
 										  names=self.c.columns[self.c.fixed_shunts])
-		self.fixed_shunts[self.c.id] = self.fixed_shunts[self.c.id].astype(str)
+		self.fixed_shunts[self.c.id] = self.fixed_shunts[self.c.id].apply(lambda x: '{0:.0f}'.format(x) if isinstance(x, float) else x)
 
 		self.switched_shunts = pd.read_excel(self.pth, sheet_name=self.c.switched_shunts, header=0,
 											 names=self.c.columns[self.c.switched_shunts])
-		self.switched_shunts[self.c.id] = self.switched_shunts[self.c.id].astype(str)
+		self.switched_shunts[self.c.id] = self.switched_shunts[self.c.id].apply(lambda x: '{0:.0f}'.format(x) if isinstance(x, float) else x)
 
 		# Extract unique list of all contingencies being considered
 		all_cont_names = [x[constants.Contingency.header] for x in [
@@ -104,7 +108,7 @@ class ImportContingencies:
 
 		if not self.contingency_names:
 			self.logger.error(('The contingencies workbook: {} is empty and therefore there'
-							  'are not continencies to test.  User entry error!')
+							   'are not continencies to test.  User entry error!')
 							  .format(self.pth))
 			raise ValueError('Empty Contingencies Workbook')
 
@@ -131,6 +135,7 @@ class ExportResults:
 	"""
 		Class to deal with the processing and exporting of results to excel
 	"""
+
 	def __init__(self, pth_workbook, results, convergence):
 		"""
 			Initialise
@@ -169,13 +174,14 @@ class ExportResults:
 				# Does not include conditional formatting
 				df.T.to_excel(excel_writer, sheet_name='{}_T'.format(sht))
 
-				# Get conditional formatting
-				data_range, criteria = self.get_conditional_formatting(df=df, cell_format_error=format_error,
-																	   cell_format_change=format_change)
-				if data_range:
-					worksheet = excel_writer.sheets[sht]
-					worksheet.conditional_format(data_range, criteria)
-
+				# Get conditional formatting when DataFrame isn't empty
+				if not df.empty:
+					data_range, criteria = self.get_conditional_formatting(
+						df=df, cell_format_error=format_error, cell_format_change=format_change
+					)
+					if data_range:
+						worksheet = excel_writer.sheets[sht]
+						worksheet.conditional_format(data_range, criteria)
 
 	def get_conditional_formatting(self, df, cell_format_error, cell_format_change):
 		"""
@@ -236,6 +242,24 @@ class ExportResults:
 		return data_range, conditional_formatting
 
 
+def busbars_to_consider(pth_busbar_list):
+	"""
+		Function returns a list of busbar numbers to be considered
+	:param str pth_busbar_list:  Path to file which contains list of busbars to consider
+	:return (pd.DataFrame, pd.Index), (df_busbars, busbars_to_keep):  List of busbars to be kept
+	:return:
+	"""
 
+	# Get list of busbars to be plotted
+	df_busbars = pd.read_excel(pth_busbar_list, sheet_name='Busbars', index_col=0, header=0)
 
+	# Reduce dataframe to only be those which are labelled as keep
+	df_busbars = df_busbars.loc[df_busbars['Include'] == 1]
 
+	# Sort into order for plotting
+	df_busbars.sort_values(by=['Nominal', 'Plot Name'], ascending=[False, True], inplace=True)
+
+	# Extract index for busbars that should be plotted
+	busbars_to_keep = df_busbars.index
+
+	return df_busbars, busbars_to_keep
