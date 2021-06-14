@@ -226,6 +226,7 @@ class BranchData:
 		# check if cont_name already in DataFrame and if not add it populated with the initial status values
 		# #if cont_name not in self.df_status.columns:
 		# #	self.df_status[cont_name] = self.df_status[self.c.status]
+		success = False
 
 		if restore_all:
 			# Loop through and restore every asset to its original status
@@ -449,6 +450,7 @@ class ShuntData:
 		# check if cont_name already in DataFrame and if not add it populated with the initial status values
 		# #if cont_name not in self.df_status.columns:
 		# #	self.df_status[cont_name] = self.df_status[self.c.status]
+		success = False
 
 		if restore_all:
 			# Loop through and restore every asset to its original status
@@ -754,6 +756,8 @@ class Tx3Data:
 		:param bool restore_all: (optional=False) - if set to True then will restore every tx3 back to original value
 		:return bool success:  Whether load flow run successfully or not
 		"""
+		success = False
+
 		if restore_all:
 			# Loop through and restore every branch to its original status
 			for i, row in self.df.iterrows():
@@ -976,6 +980,8 @@ class BusData:
 		:param bool restore_all: (optional=False) - if set to True then will restore every busbar back to original value
 		:return bool success:  True / False on whether able to change state
 		"""
+		success = False
+
 		if restore_all:
 			# Loop through and restore every branch to its original status
 			for i, row in self.df_state.iterrows():
@@ -1136,7 +1142,7 @@ class BusData:
 			Function updates voltages and then returns True / False on whether within acceptable limits for steady state
 		:param str cont_name:  Name of contingency to be checked
 		:param tuple busbars_to_ignore:  Tuple of all the busbars which should be ignored for the analysis
-		:return bool within_limits:  True / False on whether all within limits
+		:return (bool, int) (within_limits, target_bus):  True / False on whether all within limits and busbar to target
 		"""
 		# Update all busbar details for this contingency
 		self.update_voltages(cont_name=cont_name, voltage_step=False)
@@ -1149,7 +1155,10 @@ class BusData:
 		# Confirm voltages are within limits
 		within_limits = (df_subset[cont_name] <= df_subset[self.c.upper_limit]).all()
 
-		return within_limits
+		target_bus = df_subset.idxmax()[cont_name]
+		max_voltage = df_subset.max()[cont_name]
+
+		return within_limits, target_bus, max_voltage
 
 
 class MachineData:
@@ -1230,11 +1239,12 @@ class MachineData:
 			# Update status of busbar
 			self.df_loading[cont_name] = df[self.c.qgen]
 
-	def change_target(self, bus_num, target=1.0):
+	def change_target(self, bus_num, target=1.0, target_bus=0):
 		"""
 			Function adjusts the machine target voltage as requested
 		:param int bus_num: Number of busbar machine is connected to
 		:param float target:  Voltage which machine should target
+		:param int target_bus:  Busbar to target for voltage control (optional = 0)
 		:return None:
 		"""
 
@@ -1242,6 +1252,7 @@ class MachineData:
 
 		ierr = func(
 			i=bus_num,
+			intgar1=target_bus,
 			realar1=target
 		)
 
@@ -1250,6 +1261,35 @@ class MachineData:
 			self.logger.error((
 					'Error code {} raised when calling function {} for machine {} to change target voltage to {}'
 				).format(ierr, func.__name__, bus_num, target))
+		else:
+			success = True
+		return success
+
+	def change_output(self, bus_num, machine_id, q_target=0.0):
+		"""
+			Function adjusts the machine reactive power output as requested
+		:param int bus_num: Number of busbar machine is connected to
+		:param str machine_id:  ID of machine
+		:param float q_target:  Reactive power dispatch value to use
+		:return None:
+		"""
+
+		func = psspy.machine_chng_2
+
+		ierr = func(
+			i=bus_num,
+			id=machine_id,
+			realar2=q_target,
+			realar3=q_target,
+			realar4=q_target
+		)
+
+		if ierr > 0:
+			success = False
+			self.logger.error(
+				'Error code {} raised when calling function {} for machine {} to change reactive power to {:.2f} Mvar'.format(
+					ierr, func.__name__, bus_num, q_target)
+			)
 		else:
 			success = True
 		return success
@@ -1313,8 +1353,12 @@ class Contingency:
 		elif self.convergent_v_step and not self.convergent_v_steady:
 			msg = constants.Contingency.non_convergent_vsteady
 		else:
-			self.logger.error(('Unexpected condition reached when trying to determine convergence for contingency {}'
-							   ' and so have assumed {}').format(self.name, constants.Contingency.non_convergent))
+			msg = constants.Contingency.error
+			self.logger.error(
+				(
+					'Unexpected condition reached when trying to determine convergence for contingency {}'
+					' and so have assumed {}').format(self.name, constants.Contingency.non_convergent)
+			)
 		return msg
 
 	@property
@@ -1433,6 +1477,11 @@ class Contingency:
 		# First run is with locked_taps to get the step-change voltage values, second run is with moving taps to get
 		# the steady-state voltages.
 
+		# If using to establish reactive compensation requirement initially set machine output to 0 Mvar
+		if constants.ReactiveCompensationLimits.target_shunts:
+			for _, machine in constants.ReactiveCompensationLimits.target_machines.iteritems():
+				machine_data.change_output(bus_num=machine[0], machine_id=machine[1])
+
 		# Run a load flow and check for convergence along with any islanded busbars
 		convergent_load_flow, islanded_buses = psse.run_load_flow(lock_taps=True)
 
@@ -1464,14 +1513,35 @@ class Contingency:
 		# Updated the relevant aspects of bus_data for this contingency with the change in status
 		convergent_load_flow, _ = psse.run_load_flow(lock_taps=False)
 		if not convergent_load_flow:
+			# Run with flat start and then re-run with non-flat start
+			convergent_load_flow, _ = psse.run_load_flow(flat_start=True, lock_taps=False)
+			if not convergent_load_flow:
+				self.logger.error(
+					'Unable to get convergent load flow with flat start for contingency {}'.format(self.name)
+				)
+			else:
+				convergent_load_flow, _ = psse.run_load_flow(flat_start=False, lock_taps=False)
+
+		if not convergent_load_flow and not adjust_reactive:
 			self.logger.error(
-				'Load flow for contingency {} is not convergent even with transformer tapping enabled.'.format(self.name)
+				(
+					'Unable to get load flow for contingency {} to converge fully and so no voltages / busbar details '
+					'will be reliably obtained.'
+				).format(self.name)
 			)
 			self.convergent_v_steady = False
 
 			# Update busbar data with non-convergence flag to leave as blank
 			bus_data.update_voltages(cont_name=self.name, voltage_step=False, non_convergence=True)
 		else:
+			if not convergent_load_flow:
+				self.logger.info(
+					(
+						'Contingency {} not convergent without reactive compensation but will now attempt to determine '
+						'reactive compensation necessary to make convergent'
+					).format(self.name)
+				)
+
 			# Confirm if voltages all within limits otherwise reduce target set-point until voltages within limits at
 			# remote busbars.
 			if adjust_reactive:
@@ -1498,26 +1568,68 @@ class Contingency:
 
 		c = constants.ReactiveCompensationLimits
 		iter_count = 0
+		# Used to keep track of the target voltages and busbars that have already been used
+		targets_log = dict()
 
 		# Check if all steady state voltages within limits
-		within_limits = bus_data.check_within_limits(cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore)
+		within_limits, target_bus, max_voltage = bus_data.check_within_limits(cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore)
+		target_voltage = c.vmax_target
+		target_q = c.q_min
+
+		# Reset target_bus to local busbar
+		if not c.test_target_bus:
+			target_bus = 0
 
 		# Loop round gradually increasing shunt reactive power values until either within limits or max_iterations
 		# exceeded
-		while not within_limits and iter_count <= c.max_iterations:
-			# Calculate the new target voltage
-			target_voltage = c.vmax_target - c.v_step*iter_count
+		while not within_limits and target_voltage > c.vmin_target and target_q > c.q_max:
+			# Determine which busbar to target if using machines
+			if target_bus in targets_log.keys():
+				target_voltage = targets_log[target_bus] - c.v_step
+			else:
+				target_voltage = c.vmax_target
+
+			# Calculate next reactive power level to use
+			target_q += c.q_step
+
+			# Update dictionary
+			targets_log[target_bus] = target_voltage
+
 			# Iterate through each machine and change values
 			for _, machine in c.target_machines.iteritems():
-				machine_data.change_target(bus_num=machine[0], target=target_voltage)
-
-			# Run load flow and check if within_limits
-			# Run a load flow and check for convergence along with any islanded busbars
-			convergent_load_flow, islanded_buses = psse.run_load_flow(lock_taps=False)
-			within_limits = bus_data.check_within_limits(cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore)
+				if c.target_shunts:
+					machine_data.change_output(bus_num=machine[0], machine_id=machine[1], q_target=target_q)
+				else:
+					machine_data.change_target(bus_num=machine[0], target=target_voltage, target_bus=target_bus)
 
 			# Increment iter_count
 			iter_count += 1
+
+			# Run load flow and check if within_limits
+			# Run a load flow and check for convergence along with any islanded busbars
+			convergent, _ = psse.run_load_flow(lock_taps=False)
+			if not convergent:
+				convergent, _ = psse.run_load_flow(flat_start=True)
+				if convergent:
+					_, _ = psse.run_load_flow(flat_start=False)
+				elif c.target_shunts:
+					self.logger.info('\tNon-convergent for contingency {} with Q = {:.2f} Mvar'.format(self.name, target_q))
+					within_limits = False
+					continue
+				else:
+					self.logger.info(
+						'\tNon-convergent for contingency {} with target_v = {:.3f} at bus {} p.u.'.format(
+							self.name, target_voltage, target_bus)
+					)
+					within_limits = False
+					continue
+			within_limits, target_bus, max_voltage = bus_data.check_within_limits(
+				cont_name=self.name, busbars_to_ignore=self.busbars_to_ignore
+			)
+
+			# Reset target_bus to local busbar
+			if not c.test_target_bus:
+				target_bus = 0
 
 		return None
 
@@ -1615,7 +1727,7 @@ class PsseControl:
 		if lock_taps:
 			tap_changing = 0
 		else:
-			tap_changing = 2
+			tap_changing = 1
 
 		# Run loadflow with screen output controlled
 		# TODO: Define these in constants

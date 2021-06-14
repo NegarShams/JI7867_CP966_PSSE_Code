@@ -60,10 +60,21 @@ class ReactiveCompensationLimits:
 	vmin_target = 0.948
 	v_step = (vmax_target-vmin_target)/max_iterations
 
+	# Limits for reactive compensation levels to allow testing within limits
+	q_max = -1000.0
+	q_min = 0.0
+	q_step = -5.0
+
 	target_machines = {
 		'DNS4': (2204, 'SH'),
 		'WOO4': (5464, 'SH')
 	}
+
+	# Use shunts
+	target_shunts = False
+
+	# Set to True and will adjust reactive power to target reducing value at remote busbar
+	test_target_bus = False
 
 	def __init__(self):
 		pass
@@ -82,7 +93,7 @@ class PSSE:
 	# Maximum number of iterations for a Newton Raphson load flow (default = 20)
 	max_iterations = 100
 	# Tolerance for mismatch in MW/Mvar (default = 0.1)
-	mw_mvar_tolerance = 1.0
+	mw_mvar_tolerance = 2.0
 
 	sid = 1
 
@@ -157,6 +168,7 @@ class Contingency:
 	convergent = 'Convergent'
 	non_convergent_vstep = 'Non-Convergent Step Change'
 	non_convergent_vsteady = 'Non-Convergent Steady State'
+	error = 'ERROR'
 
 	# Label used to identify all the contingencies by name
 	header = 'CONTINGENCY'

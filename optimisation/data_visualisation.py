@@ -26,16 +26,18 @@ project_directory = (
 	r'\5 Working Docs\Phase B')
 
 # List and selection of raw data files
-selector = [6, 7]
+selector = [3, 4, 5]
 source_files = [
 	os.path.join(project_directory, 'Results_SVHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_WPHW(BC).xlsx'),
-	os.path.join(project_directory, 'Results_SVHW(CP966).xlsx'),
-	os.path.join(project_directory, 'Results_SVLW(CP966).xlsx'),
-	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx'),
+	os.path.join(project_directory, 'Results_SVHW(CP966)2.xlsx'),
+	os.path.join(project_directory, 'Results_SVLW(CP966)2.xlsx'),
+	os.path.join(project_directory, 'Results_WPHW(CP966)2.xlsx'),
 	os.path.join(project_directory, 'Results_SVHW(CP966)_RC.xlsx'),
-	os.path.join(project_directory, 'Results_WPHW(CP966)_RC.xlsx')
+	os.path.join(project_directory, 'Results_SVLW(CP966)_RC.xlsx'),
+	os.path.join(project_directory, 'Results_WPHW(CP966)_RC.xlsx'),
+	os.path.join(project_directory, 'Results_SVLW(CP966)_RC2.xlsx')
 ]
 
 pth_busbar_list = os.path.join(project_directory, 'Model_Review.xlsx')
@@ -130,6 +132,7 @@ def produce_plots_voltage(source_file):
 
 	# Save figure
 	plt.savefig(fig_name, dpi='figure')
+	plt.close()
 
 
 if __name__ == '__main__':
