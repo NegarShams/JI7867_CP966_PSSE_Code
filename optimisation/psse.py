@@ -1058,7 +1058,7 @@ class BusData:
 		# Updates the relevant DataFrame depending on the study being done
 		if voltage_step:
 			# Convert value to a step change rather than actual voltage
-			self.df_voltage_step[cont_name] = abs(latest_voltages-self.df_voltage_step[self.c.voltage])
+			self.df_voltage_step[cont_name] = latest_voltages
 		else:
 			self.df_voltage_steady[cont_name] = latest_voltages
 
@@ -1108,21 +1108,24 @@ class BusData:
 
 			# Step change validation
 			compliance = dict()
+
 			# #compliance[constants.Contingency.bc] = True
 			# Skips base case since base case must be compliant
+			# Removes rows that shouldn't be considered in comparison
+			bad_df = self.df_voltage_step.index.isin(rows_to_ignore)
+			# Calculate voltage step by subtracting base_case values
+			df_volt_step = abs(self.df_voltage_step.loc[~bad_df, cont_names].sub(self.df_voltage_step[self.c.voltage], axis=0))
+			# Check whether compliant with step change for contingency
+			# #condition = ((self.df_voltage_step[cont] <= voltage_step_limit) |
+			# #			 (self.df_voltage_step[cont] == False))
+			condition = df_volt_step <= voltage_step_limit
+
 			for cont in cont_names:
-				# Removes rows that shouldn't be considered in comparison
-				bad_df = self.df_voltage_step.index.isin(rows_to_ignore)
-				df_volt_step = self.df_voltage_step[~bad_df]
-				# Check whether compliant with step change for contingency
-				# #condition = ((self.df_voltage_step[cont] <= voltage_step_limit) |
-				# #			 (self.df_voltage_step[cont] == False))
-				condition = df_volt_step[cont] <= voltage_step_limit
 
 				# #condition = (abs(self.df_voltage_step[cont] - self.df_voltage_step[self.c.voltage])
 				# #			 < voltage_step_limit)
 				# Check compliant at all busbars
-				compliance[cont] = all(np.where(condition, True, False))
+				compliance[cont] = all(np.where(condition[cont], True, False))
 
 			# Update DataFrame with new row to show whether compliant
 			for key, value in compliance.iteritems():
@@ -1725,9 +1728,13 @@ class PsseControl:
 			func = psspy.fnsl
 
 		if lock_taps:
+			# Lock all taps and adjustment of shunts
 			tap_changing = 0
+			shunt_adjustment = 0
 		else:
+			# Enable stepping tab adjustment and continuous shunt adjustment (disable discrete)
 			tap_changing = 1
+			shunt_adjustment = 2
 
 		# Run loadflow with screen output controlled
 		# TODO: Define these in constants
@@ -1735,8 +1742,8 @@ class PsseControl:
 			options1=tap_changing,  # Tap changer stepping enabled
 			options2=0,  # Don't enable tie line flows
 			options3=0,  # Phase shifting adjustment disabled
-			options4=1,  # DC tap adjustment enabled
-			options5=tap_changing,  # Include switched shunt adjustment
+			options4=0,  # DC tap adjustment disabled
+			options5=shunt_adjustment,  # Include switched shunt adjustment
 			options6=flat_start,  # Flat start depends on status of <flat_start> input
 			options7=0,  # Apply VAR limits immediately
 			options8=0)  # Non divergent solution

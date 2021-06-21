@@ -35,7 +35,7 @@ pth_EirGrid_SAV = [
 	os.path.join(project_directory, 'PSSE Models', 'snv_high wind_30snv_mec_33_v1(CP966)_RC.sav'),
 	os.path.join(project_directory, 'PSSE Models', 'snv_low wind_30snv_mec_33_v2(CP966)_RC.sav'),
 	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966)_RC.sav'),
-	os.path.join(project_directory, 'PSSE Models', 'snv_low wind_30snv_mec_33_v2(CP966)_RC2.sav')
+	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966)_RC2.sav')
 ]
 
 # Which studies to consider adjusting reactive power for voltage limits
@@ -60,16 +60,16 @@ pth_results = [
 	os.path.join(project_directory, 'Results_SVHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_WPHW(BC).xlsx'),
-	os.path.join(project_directory, 'Results_SVHW(CP966)2.xlsx'),
-	os.path.join(project_directory, 'Results_SVLW(CP966)2.xlsx'),
-	os.path.join(project_directory, 'Results_WPHW(CP966)2.xlsx'),
+	os.path.join(project_directory, 'Results_SVHW(CP966).xlsx'),
+	os.path.join(project_directory, 'Results_SVLW(CP966).xlsx'),
+	os.path.join(project_directory, 'Results_WPHW(CP966).xlsx'),
 	os.path.join(project_directory, 'Results_SVHW(CP966)_RC.xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(CP966)_RC.xlsx'),
 	os.path.join(project_directory, 'Results_WPHW(CP966)_RC.xlsx'),
-	os.path.join(project_directory, 'Results_SVLW(CP966)_RC2.xlsx')
+	os.path.join(project_directory, 'Results_WPHW(CP966)_RC2.xlsx')
 ]
 
-selector = [4]
+selector = [9]
 
 # Contains details of the busbars to include and these are then used to focus the area of the analysis for voltage
 # compliance checking

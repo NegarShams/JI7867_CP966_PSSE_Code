@@ -200,19 +200,22 @@ class ExportResults:
 		if constants.Contingency.rate_for_checking in df.columns:
 			# Circuit loading
 			ref_column = colnum_string(df.columns.get_loc(constants.Contingency.rate_for_checking) + 2)
-			criteria = '=and({}{}<>"",${}{}>{},{}{}>${}{})'.format(start_col, start_row,
-																   ref_column, start_row,
-																   constants.EirGridThresholds.rating_threshold,
-																   start_col, start_row, ref_column, start_row)
+			criteria = '=and({}{}<>"",${}{}>{},{}{}>${}{})'.format(
+				start_col, start_row,
+				ref_column, start_row, constants.EirGridThresholds.rating_threshold,
+				start_col, start_row, ref_column, start_row
+			)
 			# Select the required cell formatting for this type of conditional formatting
 			selected_format = cell_format_error
 		elif constants.Busbars.lower_limit in df.columns:
 			# Voltage range checking
 			ref_column1 = colnum_string(df.columns.get_loc(constants.Busbars.lower_limit) + 2)
 			ref_column2 = colnum_string(df.columns.get_loc(constants.Busbars.upper_limit) + 2)
-			criteria = '=and({}{}<>"", or({}{}<${}{}, {}{}>${}{}))'.format(start_col, start_row,
-																		   start_col, start_row, ref_column1, start_row,
-																		   start_col, start_row, ref_column2, start_row)
+			criteria = '=and({}{}<>"", or({}{}<${}{}, {}{}>${}{}))'.format(
+				start_col, start_row,
+				start_col, start_row, ref_column1, start_row,
+				start_col, start_row, ref_column2, start_row
+			)
 			# Select the required cell formatting for this type of conditional formatting
 			selected_format = cell_format_error
 		elif constants.Contingency.v_step_lbl in df.index:
@@ -221,24 +224,31 @@ class ExportResults:
 			# Voltage step limit check
 			ref_row = df.index.get_loc(constants.Contingency.v_step_lbl) + 2
 			ref_column = colnum_string(df.columns.get_loc(constants.Contingency.bc) + 2)
-			criteria = '=and({}{}<>"",{}{}>{}${})'.format(start_col, start_row,
-														  start_col, start_row, start_col, ref_row)
+			# Updated to include the step-change voltage in the export and calculate the step-change value when using
+			# conditional formatting
+			criteria = '=and({}{}<>"",abs({}{}-{}{})>{}${})'.format(
+				start_col, start_row,
+				ref_column, start_row, start_col, start_row, start_col, ref_row
+			)
 			# Select the required cell formatting for this type of conditional formatting
 			selected_format = cell_format_error
 			end_row = ref_row - 2
 		else:
 			# The remainder relate to status changes
 			ref_column = colnum_string(df.columns.get_loc(constants.Contingency.bc) + 2)
-			criteria = 'and({}{}<>"",{}{}<>${}{})'.format(start_col, start_row,
-														  start_col, start_row, ref_column, start_row)
+			criteria = 'and({}{}<>"",{}{}<>${}{})'.format(
+				start_col, start_row,
+				start_col, start_row, ref_column, start_row)
 			# Select the required cell formatting for this type of conditional formatting
 			selected_format = cell_format_change
 			end_row = len(df.index) + 1
 
 		data_range = '{}{}:{}{}'.format(start_col, start_row, end_col, end_row)
-		conditional_formatting = {'type': 'formula',
-								  'criteria': criteria,
-								  'format': selected_format}
+		conditional_formatting = {
+			'type': 'formula',
+			'criteria': criteria,
+			'format': selected_format
+		}
 		return data_range, conditional_formatting
 
 
