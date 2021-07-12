@@ -2,7 +2,15 @@
 #######################################################################################################################
 ###											PSSE Contingency Test													###
 ###		Script loops through a list of contingencies, switching out the relevant elements and then runs load flows  ###
-###		to determine whether any of the nodes will exceed voltage limits											###
+###		to determine whether any of the nodes will exceed voltage limits.  Further development as part of JI7867	###
+###		in that the will also adjust the reactive compensation to maintain voltages within acceptable equipment		###
+###		limits anywhere on the system.																				###
+###																													###
+###		Full details of the methodology applied by this script can be found in JI7867-6-0							###
+###																													###
+###		The constants detailed below will need to be updated for the specific user running these studies			###
+###																													###
+###		To produce the outputs as shown in JI7867-6-0 the script data_visulisation.py needs to be run				###																													###
 ###																													###
 ###		Code developed by David Mills (david.mills@PSCconsulting.com, +44 7899 984158) as part of PSC 		 		###
 ###		project JI7867- EirGrid - Capital Project 966																###
@@ -20,11 +28,15 @@ import optimisation
 import optimisation.constants as constants
 
 # Constants for running studies
+# The following directory needs to be defined and provides a reference where all of the .SAV case files will be stored
 project_directory = (
 	r'C:\Users\david\Power Systems Consultants Inc\Jobs - JI7867 - Cable Integration Studies for Capital Project 966'
 	r'\5 Working Docs\Phase B')
 
-# Paths where all of the PSSe SAV cases are stored (BC = without reactive compensation)
+# Paths where all of the PSSe SAV cases are stored and the following naming convention has taken place
+# 	BC = without CP966
+# 	CP966 = With CP966
+# 	RC = With fixed reactive compensation for validation
 pth_EirGrid_SAV = [
 	os.path.join(project_directory, 'PSSE Models', 'snv_high wind_30snv_mec_33_v1(BC).sav'),
 	os.path.join(project_directory, 'PSSE Models', 'snv_low wind_30snv_mec_33_v2(BC).sav'),
@@ -38,7 +50,9 @@ pth_EirGrid_SAV = [
 	os.path.join(project_directory, 'PSSE Models', 'WP_high wind_30w_mec_33_v1(CP966)_RC2.sav')
 ]
 
-# Which studies to consider adjusting reactive power for voltage limits
+# Which studies to consider adjusting reactive power for voltage limits, False means no tuning of the reactive
+# compensation will be considered and True means tuning of the reactive compensation will be carried out to maintain
+# voltages within acceptable limits.
 adjust_reactive_comp = [
 	False,
 	False,
@@ -52,10 +66,10 @@ adjust_reactive_comp = [
 	False
 ]
 
-# Path where all of the contingencies are stores
+# Path where a spreadsheet detailing the contingencies are stored (and empty example is stored in the Python package)
 pth_Contingencies = os.path.join(project_directory, 'Contingencies.xlsx')
 
-# Results paths
+# Results paths where results from each of the study case will be stored
 pth_results = [
 	os.path.join(project_directory, 'Results_SVHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(BC).xlsx'),
@@ -69,10 +83,12 @@ pth_results = [
 	os.path.join(project_directory, 'Results_WPHW(CP966)_RC2.xlsx')
 ]
 
+# Populate this list with the specific study cases from the lists above that you wish to include for analysis.  I.e. if
+# only one number is included in the list then studies will only be run for that single study case.
 selector = [9]
 
 # Contains details of the busbars to include and these are then used to focus the area of the analysis for voltage
-# compliance checking
+# compliance checking.
 pth_busbar_list = os.path.join(project_directory, 'Model_Review.xlsx')
 
 
@@ -96,10 +112,12 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 	else:
 		busbars_to_consider = tuple()
 
+	# Initialise and load PSSE case
 	logger.info('Loading PSSE case {} and checking convergent'.format(psse_sav_case))
 	psse_case = optimisation.psse.PsseControl()
 	psse_case.load_data_case(pth_sav=psse_sav_case)
 
+	# Create a bus subsystem within PSSE to only include results for specific busbars
 	psse_case.define_bus_subsystem(busbars=tuple(busbars_to_consider))
 
 	# Check have an initially convergent load flow
@@ -121,8 +139,8 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 	else:
 		logger.info('Initial load flow study convergent')
 
-	# Make sure reactive compensation level suitable for base case
-	# Continue since base load flow case is convergent
+	# Obtain data for all elements in initial conditions (prior to any contingencies or balancing of reactive
+	# compensation)
 	bus_data = optimisation.psse.BusData(sid=psse_case.sid)
 	machine_data = optimisation.psse.MachineData(sid=psse_case.sid)
 	circuit_data = optimisation.psse.BranchData(flag=2, sid=psse_case.sid)
@@ -132,11 +150,12 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 	fixed_shunt_data = optimisation.psse.ShuntData(fixed=True, sid=psse_case.sid)
 	switched_shunt_data = optimisation.psse.ShuntData(fixed=False, sid=psse_case.sid)
 
-	# Import workbook of contingency details
+	# Import workbook of contingency details identifying those elements which need to be switched out / switched in
 	logger.info('Importing details of all contingencies from workbook {}'.format(cont_workbook))
 	contingency_data = optimisation.file_handling.ImportContingencies(pth=cont_workbook)
 	contingency_circuits_details = collections.OrderedDict()
 
+	# Process imported contingencies to identify associated elements in PSSE case and assign to a Contingency class
 	for cont_name in contingency_data.contingency_names:
 		logger.debug('Processing contingency: {}'.format(cont_name))
 
@@ -147,7 +166,7 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 		else:
 			busbars_to_ignore = tuple()
 
-		# Setup contingency
+		# Setup contingency by switching out the elements
 		circuits, tx2, tx3, busbars, fixed_shunts, switched_shunts = contingency_data.group_contingencies_by_name(
 			cont_name=cont_name)
 		contingency = optimisation.psse.Contingency(
@@ -156,15 +175,18 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 		contingency_circuits_details[cont_name] = contingency
 	logger.info('All contingencies from workbook {} imported'.format(cont_workbook))
 
+	# Empty DataFrame to use for populating details of whether the contingency was convergent, circuit / shunt switching
+	# used to keep track of whether shunt or normal asset outage for analysis against voltage limits.
 	circuit_switching = list()
 	shunt_switching = list()
-	# Empty DataFrame to use for populating details of whether the contingency was convergent
 	contingency_convergence = pd.DataFrame(
 		index=contingency_circuits_details.keys(), columns=(constants.Excel.message, constants.Excel.convergence)
 	)
 	# Add Base case message
 	contingency_convergence.loc[constants.Contingency.bc, constants.Excel.message] = constants.Contingency.convergent
 	contingency_convergence.loc[constants.Contingency.bc, constants.Excel.convergence] = True
+
+	# Loop through all contingencies, apply outage, run load flow, check for reactive compensation requirements
 	for name, contingency in contingency_circuits_details.iteritems():
 
 		logger.info('Testing contingency {}'.format(name))
@@ -235,6 +257,7 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 	results_data[c.switched_shunts] = switched_shunt_data.df_status
 	results_data[c.machine_data] = machine_data.df_loading
 
+	# Export all results to the relevant results workbook
 	optimisation.file_handling.ExportResults(
 		pth_workbook=target_workbook, results=results_data, convergence=contingency_compliance
 	)
@@ -243,7 +266,10 @@ def main(cont_workbook, psse_sav_case, target_workbook, adjust_reactive, pth_bus
 
 
 if __name__ == '__main__':
+	# Starting point
+	# Get time stamp for tracking progress
 	t0 = time.time()
+	# Get location for log files to be stored
 	script_path = os.path.dirname(os.path.abspath(__file__))
 	log_path = os.path.join(script_path, 'Logs')
 	uid = 'Contingencies_{}'.format(time.strftime('%Y%m%d_%H%M%S'))
@@ -251,7 +277,7 @@ if __name__ == '__main__':
 	local_logger = log_cls.logger
 	local_logger.info('Study Started')
 
-	# Iterates through each of the selections provided
+	# Iterates through each of the SAV case / results files provided
 	for i in selector:
 		t1 = time.time()
 		pth_sav = pth_EirGrid_SAV[i]
