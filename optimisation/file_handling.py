@@ -261,6 +261,7 @@ def busbars_to_consider(pth_busbar_list):
 	"""
 
 	# Get list of busbars to be plotted
+	#df_busbars = pd.read_excel(pth_busbar_list, sheet_name='Busbars', engine='openpyxl')
 	df_busbars = pd.read_excel(pth_busbar_list, sheet_name='Busbars', index_col=0, header=0)
 
 	# Reduce dataframe to only be those which are labelled as keep

@@ -25,8 +25,14 @@ project_directory = (
 	r'C:\Users\david\Power Systems Consultants Inc\Jobs - JI7867 - Cable Integration Studies for Capital Project 966'
 	r'\5 Working Docs\Phase B')
 
+project_directory = (
+	r'C:\Users\NegarShams\Power Systems Consultants Inc\Jobs - JI7867 - Cable Integration Studies for Capital Project 966'
+	r'\5 Working Docs\Phase B\Reactive Compensation')
+
+
+
 # List and selection of raw data files
-selector = [9]
+selector = [8]
 source_files = [
 	os.path.join(project_directory, 'Results_SVHW(BC).xlsx'),
 	os.path.join(project_directory, 'Results_SVLW(BC).xlsx'),
@@ -41,6 +47,7 @@ source_files = [
 ]
 
 pth_busbar_list = os.path.join(project_directory, 'Model_Review.xlsx')
+pth_busbar_list = os.path.join(project_directory, 'Model_Review_N1.xlsx')
 sht_steady = 'V Steady'
 sht_step = 'V Step'
 
@@ -75,9 +82,9 @@ def produce_plots_voltage(source_file, taps_locked=False):
 	# Figure Name
 	file_name, _ = os.path.splitext(source_file)
 	if taps_locked:
-		fig_name = file_name + '_VoltageLocked.png'
+		fig_name = file_name + '_VoltageLocked_N1.png'
 	else:
-		fig_name = file_name + '_Voltage.png'
+		fig_name = file_name + '_Voltage_N1.png'
 
 	# Columns and indexes in raw data that do not need to be considered in plot
 	cols_to_drop = ['NUMBER.1', 'EXNAME', col_nominal_voltage, col_basecase, col_lower_limit, col_upper_limit]
@@ -96,7 +103,7 @@ def produce_plots_voltage(source_file, taps_locked=False):
 		df[col_upper_limit] = df_steady.loc[:, col_upper_limit]
 		df[col_lower_limit] = df_steady.loc[:, col_lower_limit]
 
-	df.loc[df[col_nominal_voltage] == 380.0] = df[df.select_dtypes(include=['number']).columns] * (380.0/400.0)
+	#df.loc[df[col_nominal_voltage] == 380.0] = df[df.select_dtypes(include=['number']).columns] * (380.0/400.0)
 
 	for bus, contingency in df_busbars['Contingency'].iteritems():
 		if not pd.isna(contingency):
